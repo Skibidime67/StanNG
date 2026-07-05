@@ -70,6 +70,12 @@ window.I18N = {
   dash_ota_check: { fa: 'بررسی نسخه جدید', en: 'Check for updates' },
   dash_ota_uptodate: { fa: 'شما از آخرین نسخه استفاده می‌کنید ✔', en: 'You are on the latest version ✔' },
   dash_ota_available: { fa: 'نسخه جدید موجود است:', en: 'New version available:' },
+  dash_ota_update_btn: { fa: 'به‌روزرسانی همین الان', en: 'Update Now' },
+  dash_ota_update_hint: { fa: 'داده‌ی کاربران (data/db.json) هرگز در این فرآیند دست‌نخورده باقی می‌ماند.', en: 'User data (data/db.json) is never touched during this process.' },
+  dash_ota_update_confirm: { fa: 'پنل به نسخه {version} به‌روزرسانی و سرویس چند ثانیه ری‌استارت می‌شود. کاربران و تنظیمات شما حفظ می‌شوند. ادامه می‌دهید؟', en: 'The panel will update to version {version} and restart for a few seconds. Your users and settings are preserved. Continue?' },
+  dash_ota_updating: { fa: 'در حال دانلود و اعمال به‌روزرسانی... سرویس به‌زودی ری‌استارت می‌شود', en: 'Downloading and applying the update... the service will restart shortly' },
+  dash_ota_done: { fa: 'به‌روزرسانی با موفقیت انجام شد! در حال بارگذاری مجدد...', en: 'Update completed successfully! Reloading...' },
+  dash_ota_timeout: { fa: 'سرویس دیر بازگشت؛ لطفاً دستی صفحه را رفرش کنید', en: 'The service took too long to come back; please refresh manually' },
 
   // ---- inbounds ----
   inb_title: { fa: 'مدیریت کاربران', en: 'User Management' },

@@ -26,7 +26,11 @@ DEFAULT_DB: Dict[str, Any] = {
         "public_domain": "",         # optional override; else derived from request Host header
         "keep_alive": True,
         "ota_repo": "your-username/StanNG",
-        "app_version": "1.1.0",
+        # NOTE: app_version is intentionally NOT stored here. It must always
+        # reflect the code actually running on disk (main.py's APP_VERSION),
+        # never a stale value frozen into db.json from an earlier install —
+        # that mismatch used to make the dashboard show the wrong "Current"
+        # version after every update.
         # ---- advanced config defaults (applied to newly generated VLESS links) ----
         "default_fingerprint": "chrome",     # chrome | ios | firefox | edge | random
         "default_alpn": "http/1.1",          # http/1.1 | h2,http/1.1 | h3,h2,http/1.1
@@ -85,6 +89,11 @@ def load_db() -> Dict[str, Any]:
             if k not in db["settings"]:
                 db["settings"][k] = v
                 changed = True
+        # Migration: drop any stale app_version previously persisted by an
+        # older build — it must never override the code's real APP_VERSION.
+        if "app_version" in db["settings"]:
+            del db["settings"]["app_version"]
+            changed = True
     if not db.get("secret_key"):
         db["secret_key"] = secrets.token_hex(32)
         changed = True

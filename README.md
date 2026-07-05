@@ -44,7 +44,7 @@
 | ⚙️ **تنظیمات پیشرفته کانفیگ** — Fingerprint، ALPN، SNI اختصاصی (Domain Fronting) و پارامترهای Fragment به‌صورت سراسری قابل تنظیم | ⚙️ **Advanced config tweaks** — global defaults for Fingerprint, ALPN, custom SNI (domain fronting), and Fragment parameters |
 | 🎁 **کانفیگ‌های نمایشی خودکار** — هر لینک اشتراک به‌صورت پیش‌فرض شامل یک ریمارک زندهٔ «حجم/اعتبار باقی‌مانده» و یک پیام «StanNG رایگان است ❤️» است | 🎁 **Forced info configs** — every subscription automatically includes a live "quota/days left" remark entry and a "StanNG is Free ❤️" credit entry |
 | 📡 **آی‌پی تمیز کلودفلر** — دریافت خودکار از مخزن عمومی گیت‌هاب + مدیریت دستی | 📡 **Clean-IP manager** — one-click fetch from a public GitHub source + manual entries |
-| 🔄 **آپدیت‌یاب OTA** — بررسی نسخه جدید مستقیماً از ریلیزهای گیت‌هاب شما | 🔄 **OTA update checker** — checks your GitHub releases for newer panel versions |
+| 🔄 **آپدیت خودکار درون‌پنلی** — با یک کلیک از خود داشبورد آپدیت کنید، بدون از دست دادن کاربران و تنظیمات | 🔄 **One-click in-panel self-update** — update straight from the dashboard, users and settings always preserved |
 | 🔗 **اشتراک چندگانه** — لینک متنی Base64 و JSON، همزمان با پورت TLS و بدون‌TLS | 🔗 **Multi-format subscriptions** — plain Base64 & JSON links, both TLS and non-TLS ports |
 | 🛑 **ضد فروش** — صدور مجدد UUID با یک کلیک برای ابطال آنی لینک‌های قدیمی | 🛑 **Anti-resale** — one-click UUID rotation instantly revokes old links |
 | 📱 **صفحه وضعیت اختصاصی** — لینک عمومی برای هر کاربر جهت رصد مصرف بدون نیاز به ورود به پنل | 📱 **Per-user status page** — public read-only link showing usage/devices, no login needed |
@@ -190,6 +190,36 @@ Two settings sections are editable from within the panel's **Settings** page:
 
 ---
 
+## 🔄 آپدیت پنل بدون از دست دادن کاربران | Updating Without Losing Users
+
+پنل به‌گونه‌ای طراحی شده که **کد** (فایل‌های `.py`, `.html`, `.css`, `.js`) کاملاً از **داده‌ها** (پوشهٔ `data/`، شامل `db.json` با تمام کاربران، رمز عبور ادمین و آمار ترافیک) جدا باشد. همین جداسازی اجازه می‌دهد آپدیت کد به‌صورت امن انجام شود بدون این‌که داده‌ای از دست برود.
+
+The panel is built so that **code** (`.py`/`.html`/`.css`/`.js` files) is completely separate from **data** (the `data/` folder, containing `db.json` with all users, the admin password, and traffic stats). This separation is what makes it safe to update the code without ever touching your data.
+
+### چطور کار می‌کند | How it works
+
+1. در **داشبورد → به‌روزرسانی پنل**، ابتدا مخزن گیت‌هاب خودتان را در **تنظیمات → مخزن گیت‌هاب برای آپدیت** وارد کنید (مثلاً `your-username/StanNG`).
+   In **Dashboard → Panel Update**, first set your GitHub repo in **Settings → GitHub Repo for Updates** (e.g. `your-username/StanNG`).
+2. روی **بررسی نسخه جدید** کلیک کنید. اگر نسخه‌ی جدیدتری در ریلیز/تگ‌های گیت‌هاب شما پیدا شود، دکمهٔ **به‌روزرسانی همین الان** ظاهر می‌شود.
+   Click **Check for updates**. If a newer version is found in your GitHub releases/tags, an **Update Now** button appears.
+3. با کلیک روی آن (و تأیید پیام هشدار)، پنل به‌صورت خودکار:
+   Clicking it (after confirming the warning prompt) makes the panel automatically:
+   - آرشیو سورس‌کد نسخهٔ جدید را از گیت‌هاب دانلود می‌کند
+     Downloads the new version's source archive from GitHub
+   - آن را در یک پوشهٔ موقت باز و اعتبارسنجی می‌کند (بدون دست‌زدن به نصب فعلی)
+     Extracts and validates it in a temporary staging folder (without touching the live install)
+   - فقط فایل‌های کد را جایگزین می‌کند — **پوشهٔ `data/` هرگز لمس نمی‌شود**
+     Swaps in only the code files — **the `data/` folder is never touched**
+   - سرویس را ری‌استارت می‌کند (Railway/Render به‌صورت خودکار دوباره بالا می‌آورندش)
+     Restarts the service (Railway/Render automatically bring it back up)
+4. داشبورد به‌صورت خودکار صبر می‌کند تا سرویس دوباره پاسخ بدهد و بعد صفحه را رفرش می‌کند — همان کاربران، همان رمز عبور، همان تنظیمات.
+   The dashboard automatically waits for the service to respond again, then reloads — same users, same password, same settings.
+
+> ⚠️ **نکته‌ی ریستارت روی هاست‌های بدون سوپروایزر خودکار**: این قابلیت به این متکی است که پلتفرم میزبانی (Railway، Render و…) بعد از خروج پردازش، آن را دوباره اجرا کند — که هر دوی این پلتفرم‌ها این کار را انجام می‌دهند. اگر پنل را به‌صورت دستی (مثلاً فقط با `python main.py` در یک ترمینال ساده، بدون systemd/Docker/PM2) اجرا می‌کنید، بعد از آپدیت باید خودتان دوباره آن را اجرا کنید.
+> ⚠️ **Restart caveat on hosts without an auto-supervisor**: this feature relies on the hosting platform (Railway, Render, etc.) restarting the process after it exits — both of those platforms do this. If you're running the panel manually (e.g. just `python main.py` in a plain terminal, without systemd/Docker/PM2), you'll need to start it again yourself after the update.
+
+---
+
 ## 📁 ساختار پروژه | Project Structure
 
 ```
@@ -274,6 +304,7 @@ StanNG/
 | GET | `/health` | Health check (برای Keep-Alive و پلتفرم) |
 | GET | `/stats` | آمار زنده CPU/RAM/ترافیک/موقعیت سرور |
 | GET | `/api/ota/check` | بررسی نسخه جدید از ریلیزهای گیت‌هاب |
+| POST | `/api/ota/update` | دانلود و اعمال آخرین نسخه، بدون دست‌زدن به `data/` — سپس ری‌استارت سرویس |
 | WS | `/ws/{uid}` | نقطهٔ اتصال VLESS-over-WebSocket |
 
 ---

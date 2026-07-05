@@ -132,8 +132,12 @@
   window.addEventListener('resize', () => renderTrafficChart(document.getElementById('trafficChart'), lastHourly));
 
   // ---------------- OTA ----------------
+  let otaLatestKnown = null;
+
   document.getElementById('otaCheckBtn').addEventListener('click', async () => {
     const btn = document.getElementById('otaCheckBtn');
+    const updateBtn = document.getElementById('otaUpdateBtn');
+    const hint = document.getElementById('otaUpdateHint');
     STANNG.setLoading(btn, true);
     try {
       const r = await STANNG.api('/api/ota/check');
@@ -141,9 +145,15 @@
       if (r.update_available) {
         el.innerHTML = `<span style="color:var(--gold-300)">${STANNG.t('dash_ota_available')} <b>${r.latest}</b></span> — <a href="${r.url}" target="_blank" style="color:var(--azure); text-decoration:underline;">GitHub</a>`;
         STANNG.toast(STANNG.t('dash_ota_available') + ' ' + r.latest, 'info');
+        otaLatestKnown = r.latest;
+        updateBtn.style.display = '';
+        hint.style.display = '';
       } else {
         el.innerHTML = `<span style="color:var(--emerald)">${STANNG.t('dash_ota_uptodate')}</span>`;
         STANNG.toast(STANNG.t('dash_ota_uptodate'), 'success');
+        otaLatestKnown = null;
+        updateBtn.style.display = 'none';
+        hint.style.display = 'none';
       }
     } catch (e) {
       STANNG.toast(e.detail || 'error', 'error');
@@ -151,6 +161,59 @@
       STANNG.setLoading(btn, false);
     }
   });
+
+  document.getElementById('otaUpdateBtn').addEventListener('click', async () => {
+    const msg = STANNG.t('dash_ota_update_confirm').replace('{version}', otaLatestKnown || '');
+    if (!confirm(msg)) return;
+
+    const updateBtn = document.getElementById('otaUpdateBtn');
+    const checkBtn = document.getElementById('otaCheckBtn');
+    const el = document.getElementById('otaResult');
+    STANNG.setLoading(updateBtn, true);
+    checkBtn.disabled = true;
+
+    try {
+      const r = await STANNG.api('/api/ota/update', { method: 'POST' });
+      if (r.ok) {
+        el.innerHTML = `<span style="color:var(--gold-300)">${STANNG.t('dash_ota_updating')}</span>`;
+        STANNG.toast(STANNG.t('dash_ota_updating'), 'info', 8000);
+        waitForRestartThenReload();
+      } else {
+        el.innerHTML = `<span style="color:var(--emerald)">${STANNG.t('dash_ota_uptodate')}</span>`;
+        STANNG.toast(STANNG.t('dash_ota_uptodate'), 'success');
+        STANNG.setLoading(updateBtn, false);
+        checkBtn.disabled = false;
+      }
+    } catch (e) {
+      STANNG.toast(e.detail || 'error', 'error');
+      STANNG.setLoading(updateBtn, false);
+      checkBtn.disabled = false;
+    }
+  });
+
+  // After triggering an update, the server process exits so the hosting
+  // platform (Railway/Render) restarts it on the new code. We poll /health
+  // until it responds again, then reload the dashboard automatically.
+  function waitForRestartThenReload() {
+    let attempts = 0;
+    const poll = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch('/health', { cache: 'no-store' });
+        if (res.ok) {
+          clearInterval(poll);
+          STANNG.toast(STANNG.t('dash_ota_done'), 'success', 3000);
+          setTimeout(() => window.location.reload(), 1200);
+        }
+      } catch (e) {
+        // still down / restarting — keep polling
+      }
+      if (attempts > 60) { // ~3 minutes safety cutoff
+        clearInterval(poll);
+        STANNG.toast(STANNG.t('dash_ota_timeout'), 'error', 8000);
+      }
+    }, 3000);
+  }
 
   document.getElementById('quickAddBtn').addEventListener('click', () => { showView('inbounds'); openInboundModal(); });
 

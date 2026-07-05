@@ -38,7 +38,7 @@ from vless_engine import relay
 from colo_map import describe_colo
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 PANEL_NAME = "StanNG"  # fixed brand name — intentionally not user-editable
 TELEGRAM_CONTACT = "https://t.me/rvivl"
 SESSION_COOKIE = "stanng_session"
@@ -870,35 +870,200 @@ async def stats(request: Request, user: str = Depends(require_auth)):
     }
 
 
+def _ver_tuple(v):
+    parts = re.findall(r"\d+", v or "")
+    return tuple(int(p) for p in parts) if parts else (0,)
+
+
+async def _resolve_latest_release(repo: str, current: str, client: httpx.AsyncClient):
+    """Returns (latest_version, html_url, download_zip_url) using GitHub's
+    releases API first, falling back to tags if the repo has no releases."""
+    latest, url, zip_url = current, f"https://github.com/{repo}/releases", None
+    r = await client.get(f"https://api.github.com/repos/{repo}/releases/latest")
+    if r.status_code == 200:
+        data = r.json()
+        tag = (data.get("tag_name") or "").lstrip("v")
+        if tag:
+            latest = tag
+            url = data.get("html_url", url)
+            zip_url = data.get("zipball_url")
+    else:
+        r2 = await client.get(f"https://api.github.com/repos/{repo}/tags")
+        if r2.status_code == 200 and r2.json():
+            tag_info = r2.json()[0]
+            latest = (tag_info.get("name") or current).lstrip("v")
+            url = f"https://github.com/{repo}/releases/tag/{tag_info.get('name')}"
+            zip_url = tag_info.get("zipball_url")
+    return latest, url, zip_url
+
+
 @app.get("/api/ota/check")
 async def api_ota_check(user: str = Depends(require_auth)):
     db = await store.get()
     repo = (db.get("settings") or {}).get("ota_repo") or "your-username/StanNG"
-    current = (db.get("settings") or {}).get("app_version", APP_VERSION)
+    current = APP_VERSION  # always the version of the code actually running, never a stored value
     latest = current
     url = f"https://github.com/{repo}/releases"
     try:
         async with httpx.AsyncClient(timeout=6, headers={"Accept": "application/vnd.github+json"}) as client:
-            r = await client.get(f"https://api.github.com/repos/{repo}/releases/latest")
-            if r.status_code == 200:
-                tag = r.json().get("tag_name", "").lstrip("v")
-                if tag:
-                    latest = tag
-                    url = r.json().get("html_url", url)
-            else:
-                r2 = await client.get(f"https://api.github.com/repos/{repo}/tags")
-                if r2.status_code == 200 and r2.json():
-                    latest = r2.json()[0].get("name", current).lstrip("v")
-                    url = f"https://github.com/{repo}/releases/tag/{r2.json()[0].get('name')}"
+            latest, url, _zip = await _resolve_latest_release(repo, current, client)
     except Exception:
         pass
 
-    def _ver_tuple(v):
-        parts = re.findall(r"\d+", v)
-        return tuple(int(p) for p in parts) if parts else (0,)
-
     update_available = _ver_tuple(latest) > _ver_tuple(current)
     return {"current": current, "latest": latest, "update_available": update_available, "url": url}
+
+
+# ------------------------------------------------------------------ OTA self-update
+#
+# Design constraints (must never be violated):
+#   1. data/db.json (all users, admin credentials, traffic stats) is NEVER
+#      touched by an update — it lives outside the code tree that gets
+#      replaced, and the updater explicitly refuses to overwrite it even if
+#      a downloaded release happened to include a stray copy.
+#   2. The update is staged into a temp directory and verified before a
+#      single file in the live install is modified, so a bad/partial
+#      download can never leave the panel half-updated.
+#   3. After swapping files in, the process exits with a special code; the
+#      platform's restart policy (Railway/Render/systemd all do this) brings
+#      the app back up instantly on the new code. There is no in-process
+#      "hot swap" of Python source, which would be unreliable.
+
+UPDATE_LOCK = asyncio.Lock()
+NEVER_TOUCH = {"data"}  # top-level paths that must never be replaced/removed by an update
+
+
+def _safe_extract_zip(zip_path: str, dest_dir: str):
+    """Extract a GitHub codeload zip (which wraps everything in a single
+    top-level '<owner>-<repo>-<sha>/' folder) into dest_dir, stripping that
+    wrapper folder. Guards against zip-slip path traversal."""
+    import zipfile
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+        if not names:
+            raise RuntimeError("empty archive")
+        root_prefix = names[0].split("/")[0] + "/"
+        for member in names:
+            if not member.startswith(root_prefix):
+                continue
+            rel = member[len(root_prefix):]
+            if not rel:
+                continue
+            target = os.path.normpath(os.path.join(dest_dir, rel))
+            if not target.startswith(os.path.normpath(dest_dir) + os.sep) and target != os.path.normpath(dest_dir):
+                raise RuntimeError(f"unsafe path in archive: {member}")
+            if member.endswith("/"):
+                os.makedirs(target, exist_ok=True)
+            else:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with zf.open(member) as src, open(target, "wb") as dst:
+                    dst.write(src.read())
+
+
+def _apply_staged_update(staged_dir: str, live_dir: str) -> list:
+    """Copies every file from staged_dir into live_dir, EXCEPT anything
+    under a path listed in NEVER_TOUCH. Returns the list of top-level
+    entries that were updated, for logging/telemetry."""
+    import shutil
+    touched = []
+    for entry in os.listdir(staged_dir):
+        if entry in NEVER_TOUCH:
+            continue
+        src = os.path.join(staged_dir, entry)
+        dst = os.path.join(live_dir, entry)
+        if os.path.isdir(src):
+            if os.path.isdir(dst):
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+        touched.append(entry)
+    return touched
+
+
+@app.post("/api/ota/update")
+async def api_ota_update(request: Request, user: str = Depends(require_auth)):
+    """Downloads the latest tagged release/tag source archive, stages it,
+    and swaps it into place — never touching data/db.json — then schedules
+    a process exit so the host platform restarts us on the new code."""
+    if UPDATE_LOCK.locked():
+        raise HTTPException(409, "update-already-in-progress")
+
+    async with UPDATE_LOCK:
+        db = await store.get()
+        repo = (db.get("settings") or {}).get("ota_repo") or ""
+        if not repo or "/" not in repo:
+            raise HTTPException(400, "no-repo-configured")
+
+        import tempfile
+        import shutil as _shutil
+
+        current = APP_VERSION
+        try:
+            async with httpx.AsyncClient(timeout=15, headers={"Accept": "application/vnd.github+json"}, follow_redirects=True) as client:
+                latest, html_url, zip_url = await _resolve_latest_release(repo, current, client)
+                if _ver_tuple(latest) <= _ver_tuple(current):
+                    return {"ok": False, "reason": "already-up-to-date", "current": current, "latest": latest}
+                if not zip_url:
+                    raise HTTPException(502, "no-downloadable-archive-found")
+
+                tmp_root = tempfile.mkdtemp(prefix="stanng_ota_")
+                zip_path = os.path.join(tmp_root, "release.zip")
+                staged_dir = os.path.join(tmp_root, "staged")
+                os.makedirs(staged_dir, exist_ok=True)
+
+                async with client.stream("GET", zip_url) as resp:
+                    if resp.status_code != 200:
+                        raise HTTPException(502, f"download-failed-{resp.status_code}")
+                    with open(zip_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes():
+                            f.write(chunk)
+
+            _safe_extract_zip(zip_path, staged_dir)
+
+            # Sanity check: refuse to apply an archive that doesn't even
+            # look like this project, so a misconfigured repo can't nuke
+            # the live install with unrelated files.
+            if not os.path.exists(os.path.join(staged_dir, "main.py")):
+                _shutil.rmtree(tmp_root, ignore_errors=True)
+                raise HTTPException(502, "downloaded-archive-missing-main.py")
+
+            # Belt-and-suspenders: if the release archive somehow contains
+            # its own data/ folder, strip it out before applying — the
+            # live data/ directory (with db.json) must never be replaced.
+            staged_data = os.path.join(staged_dir, "data")
+            if os.path.isdir(staged_data):
+                _shutil.rmtree(staged_data, ignore_errors=True)
+
+            touched = _apply_staged_update(staged_dir, BASE_DIR)
+            _shutil.rmtree(tmp_root, ignore_errors=True)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"update-failed: {e}")
+
+        # Schedule a process exit shortly after responding, so the client
+        # gets a success response before we go down. We deliberately exit
+        # with a NON-ZERO code: Railway's restart policy in railway.json is
+        # "ON_FAILURE", which — per Railway's own docs — only restarts a
+        # service that stops with a non-zero exit code; exiting 0 there
+        # would just leave the service stopped forever. Render (and plain
+        # systemd/Docker --restart=on-failure setups) restart on any crash
+        # regardless of code, so a non-zero exit is safe and correct on
+        # every supported platform.
+        async def _delayed_restart():
+            await asyncio.sleep(1.5)
+            os._exit(87)  # 87 = arbitrary non-zero "restarting for update" code
+
+        asyncio.create_task(_delayed_restart())
+        return {
+            "ok": True,
+            "previous_version": current,
+            "new_version": latest,
+            "files_updated": touched,
+            "restarting": True,
+        }
 
 
 # ------------------------------------------------------------------ VLESS websocket endpoint
