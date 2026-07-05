@@ -75,7 +75,16 @@ html[data-theme="light"]{
 }
 
 *{ box-sizing: border-box; }
-html,body{ height: 100%; }
+/* NOTE: intentionally NOT setting html/body to a fixed height:100% here.
+   On mobile browsers the address bar hides/shows as you scroll, which
+   continuously recalculates 100vh; combined with a hard-pinned
+   height:100% on <html>/<body> plus min-height:100vh on inner
+   containers, that used to create a feedback loop where the whole page
+   kept growing every time you scrolled toward the bottom. Letting
+   height stay auto (content-driven) removes that feedback loop, and
+   min-height:100dvh below still guarantees full-viewport coverage on
+   short pages. */
+html,body{ min-height: 100%; }
 body{
   margin:0;
   background: radial-gradient(1200px 800px at 15% -10%, rgba(139,92,246,0.14), transparent 60%),

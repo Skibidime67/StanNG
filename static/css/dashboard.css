@@ -4,16 +4,25 @@
    =========================================================== */
 
 .app-shell{
-  min-height:100vh; display:flex; position:relative; z-index:1;
+  min-height:100vh; min-height:100dvh; display:flex; position:relative; z-index:1;
 }
 
 /* ---------------- sidebar ---------------- */
 .sidebar{
-  width: 250px; flex-shrink:0; min-height:100vh;
+  width: 250px; flex-shrink:0;
   background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
   border-inline-end: 1px solid var(--border-soft);
   display:flex; flex-direction:column; padding: 20px 14px;
-  position: sticky; top:0; align-self:flex-start; height:100vh;
+  position: sticky; top:0; align-self:flex-start;
+  /* Use the dynamic viewport unit (falls back to plain vh on older
+     browsers) so the sidebar's height doesn't fight with the address
+     bar hide/show animation on mobile Safari/Chrome — mixing a fixed
+     100vh with `position: sticky` there causes the whole page to keep
+     growing every time the user scrolls near the bottom. */
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow-y: auto;
   transition: transform var(--dur-mid) var(--ease-out), width var(--dur-mid) var(--ease-out);
   z-index: 40;
 }
@@ -295,4 +304,42 @@ table.data-table tbody tr:hover{ background: var(--surface); }
 .feature-chip{
   display:inline-flex; align-items:center; gap:6px; padding: 6px 11px; border-radius:999px;
   background: var(--surface); border:1px solid var(--border-soft); font-size: 11.5px; color: var(--text-2);
+}
+
+/* ---------------- traffic chart (canvas + HTML overlay) ---------------- */
+.chart-wrap{
+  position: relative; width: 100%;
+}
+.chart-legend{
+  display:flex; flex-wrap:wrap; gap: 14px; margin-bottom: 10px;
+  font-size: 12px; color: var(--text-2);
+}
+.chart-legend-item{ display:inline-flex; align-items:center; gap:6px; }
+.chart-legend .dot{
+  display:inline-block; width:8px; height:8px; border-radius:2px; flex-shrink:0;
+}
+.chart-legend .dot-gold{ background: linear-gradient(135deg, var(--gold-300), var(--gold-500)); border-radius:2px; }
+.chart-legend .dot-azure{ background: var(--azure); border-radius:2px; }
+.chart-legend .dot-line{ background: var(--emerald); border-radius:50%; }
+
+.chart-wrap canvas{ display:block; width:100%; cursor: crosshair; touch-action: pan-y; }
+
+.chart-tooltip{
+  position:absolute; pointer-events:none; z-index: 5;
+  background: var(--bg-1); border:1px solid var(--border-strong); border-radius: 10px;
+  padding: 8px 10px; font-size: 11.5px; color: var(--text-1);
+  box-shadow: var(--shadow-card);
+  opacity:0; transition: opacity 120ms ease-out;
+  min-width: 150px; white-space: nowrap;
+}
+.chart-tooltip-time{ font-weight:700; color: var(--gold-300); margin-bottom:4px; font-size:11px; }
+.chart-tooltip-row{ display:flex; align-items:center; gap:6px; margin-top:2px; }
+.chart-tooltip-row .dot{ width:7px; height:7px; border-radius:2px; flex-shrink:0; }
+.chart-tooltip-row .dot-gold{ background: linear-gradient(135deg, var(--gold-300), var(--gold-500)); }
+.chart-tooltip-row .dot-azure{ background: var(--azure); }
+.chart-tooltip-row .dot-line{ background: var(--emerald); border-radius:50%; }
+
+@media (max-width: 560px){
+  .chart-legend{ font-size: 11px; gap: 10px; }
+  .chart-tooltip{ font-size: 10.5px; min-width: 130px; }
 }
